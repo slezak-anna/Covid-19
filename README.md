@@ -7,7 +7,18 @@ It uses **CatBoost**, **XGBoost**, and other ML libraries, with a FastAPI interf
 
 ## Project Structure
 Assignment/
-<pre> ```text ├── src/ # Source code (data loading, training, prediction, API) │ ├── config.py │ ├── data.py │ ├── model.py │ ├── train.py │ ├── predict.py │ └── serve.py ├── params.yaml # Configuration parameters ├── requirements.txt # Python dependencies ├── README.md # Documentation └── .gitignore ``` </pre>
+<pre> ```
+├── src/ # Source code (data loading, training, prediction, API)
+│ ├── config.py
+│ ├── data.py
+│ ├── model.py
+│ ├── train.py
+│ ├── predict.py
+│ └── serve.py
+├── params.yaml # Configuration parameters
+├── requirements.txt # Python dependencies
+├── README.md # Documentation
+└── .gitignore``` </pre>
 
 ## Installation
 
@@ -23,59 +34,76 @@ conda activate covid-19
 (or use python -m venv venv && source venv/bin/activate)
 ```
 ### 3. Install dependencies
+```bash
 pip install -r requirements.txt
-
-### 4. Training the Model
+```
+## Training the Model
 To train the model using the dataset in datasets/:
+```bash
 python -m src.train
+```
 The trained model will be saved to the models/ directory.
 
-### 5. Making Predictions
+## Making Predictions
 Run:
 python -m src.predict
 This will load the saved model and generate predictions based on the input data.
 
-### 6. Serving the Model via API
+## Serving the Model via API
 Start FastAPI server:
+```bash
 uvicorn src.serve:app --reload
-By default, the API runs at:
+```
+By default, the API runs at: http://localhost:8000
 
-http://localhost:8000
+### Example Prediction Requests
 
-#### 7. Example Prediction Requests
 1) Using Swagger UI
 Open:
-http://127.0.0.1:8000/docs
+```bash
+http://localhost:8000/docs
+```
 Find /predict-range, click "Try it out", paste your JSON, and Execute.
 
-2) Using cURL (Linux / macOS / Git Bash on Windows)
+3) Using cURL (Linux / macOS / Git Bash on Windows)
+```bash
 curl -X POST http://localhost:8000/predict-range \
   -H "Content-Type: application/json" \
   -d '{"country":"Poland","province":"","start_date":"2020-03-25","end_date":"2020-04-23"}'
-   
-4) Using PowerShell
+```
+
+5) Using PowerShell
+```bash
 Invoke-WebRequest `
   -Uri "http://localhost:8000/predict-range" `
   -Method POST `
   -Headers @{ "Content-Type" = "application/json" } `
   -Body '{"country":"Poland","province":"","start_date":"2020-03-25","end_date":"2020-04-23"}' |
   Select-Object -ExpandProperty Content
+```
 
-### 8. Tracking Experiments with MLflow
+## Tracking Experiments with MLflow
 Start MLflow tracking server:
 
+```bash
 mlflow ui --port 5000
+```
 
 In src/train.py, set tracking URI:
+```bash
 mlflow.set_tracking_uri("http://localhost:5000")
 mlflow.set_experiment("covid19-risk")
-
+```
 Open MLflow UI in browser:
-http://127.0.0.1:5000
+```bash
+http://localhost:5000
+```
 
-
-### 9. All parameters (model hyperparameters, file paths, dates) are stored in:
+## All parameters (model hyperparameters, file paths, dates) are stored in:
+```bash
 params.yaml
+```
+
 Modify this file to adjust the training setup without changing the code.
 
 Example params.yaml
@@ -89,7 +117,7 @@ data:
   dataset_path: "datasets/"
 
 
-### 10. Notes
+## Notes
 - The dataset is not included in this repository. Place it in datasets/ before training.
 
 - For reproducibility, consider using conda env export > environment.yml after setting up the environment.
