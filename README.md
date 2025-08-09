@@ -8,6 +8,8 @@ It uses **CatBoost**, **XGBoost**, and other ML libraries, with a FastAPI interf
 ## Project Structure
 <pre>
 Assignment/
+├── tests/  
+│ ├── test_smoke.py # Simple smoke test verifying the program runs and config loads correctly
 ├── src/ # Source code (data loading, training, prediction, API)
 │ ├── config.py
 │ ├── data.py
@@ -140,3 +142,10 @@ This project can be further enhanced with the following features:
      - Request tracking
      - Latency monitoring
      - Accuracy drift detection
+    
+4. **Testing Expansion**
+   - Extend `tests/test_smoke.py` into a full test suite.
+   - Include:
+     - API endpoint tests
+     - Model accuracy validation
+     - Data preprocessing checks
