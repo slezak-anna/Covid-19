@@ -6,8 +6,8 @@ It uses **CatBoost**, **XGBoost**, and other ML libraries, with a FastAPI interf
 ---
 
 ## Project Structure
+<pre>
 Assignment/
-<pre> ```
 ├── src/ # Source code (data loading, training, prediction, API)
 │ ├── config.py
 │ ├── data.py
@@ -46,7 +46,9 @@ The trained model will be saved to the models/ directory.
 
 ## Making Predictions
 Run:
+```bash
 python -m src.predict
+```
 This will load the saved model and generate predictions based on the input data.
 
 ## Serving the Model via API
@@ -54,7 +56,7 @@ Start FastAPI server:
 ```bash
 uvicorn src.serve:app --reload
 ```
-By default, the API runs at: http://localhost:8000
+By default, the API runs at: "http://localhost:8000"
 
 ### Example Prediction Requests
 
