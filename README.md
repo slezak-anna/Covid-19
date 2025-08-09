@@ -31,7 +31,7 @@ cd Covid-19
 ```
 ### 2. Create a virtual environment
 ```bash
-conda create -n covid-19-env python=3.9 -y
+conda create -n covid-19-env python=3.10 -y
 conda activate covid-19-env
 (or use python -m venv covid-19-env && source covid-19-env/bin/activate)
 ```
