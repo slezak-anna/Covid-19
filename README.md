@@ -96,7 +96,7 @@ mlflow ui --port 5000
 In src/train.py, set tracking URI:
 ```bash
 mlflow.set_tracking_uri("http://localhost:5000")
-mlflow.set_experiment("covid19-risk")
+mlflow.set_experiment("covid19-catboost")
 ```
 Open MLflow UI in browser:
 ```bash
