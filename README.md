@@ -7,17 +7,7 @@ It uses **CatBoost**, **XGBoost**, and other ML libraries, with a FastAPI interf
 
 ## Project Structure
 Assignment/
-├── src/ # Source code (data loading, training, prediction, API)
-│ ├── config.py
-│ ├── data.py
-│ ├── model.py
-│ ├── train.py
-│ ├── predict.py
-│ └── serve.py
-├── params.yaml # Configuration parameters
-├── requirements.txt # Python dependencies
-├── README.md # Documentation
-└── .gitignore
+<pre> ```text ├── src/ # Source code (data loading, training, prediction, API) │ ├── config.py │ ├── data.py │ ├── model.py │ ├── train.py │ ├── predict.py │ └── serve.py ├── params.yaml # Configuration parameters ├── requirements.txt # Python dependencies ├── README.md # Documentation └── .gitignore ``` </pre>
 
 ## Installation
 
@@ -25,13 +15,13 @@ Assignment/
 ```bash
 git clone https://github.com/<your-username>/Covid-19.git
 cd Covid-19
-
+```
 ### 2. Create a virtual environment
 ```bash
 conda create -n covid-19 python=3.9 -y
 conda activate covid-19
 (or use python -m venv venv && source venv/bin/activate)
-
+```
 ### 3. Install dependencies
 pip install -r requirements.txt
 
