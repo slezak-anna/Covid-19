@@ -22,10 +22,12 @@ Assignment/
 ## Installation
 
 ### 1. Clone the repository
+```bash
 git clone https://github.com/<your-username>/Covid-19.git
 cd Covid-19
 
 ### 2. Create a virtual environment
+```bash
 conda create -n covid-19 python=3.9 -y
 conda activate covid-19
 (or use python -m venv venv && source venv/bin/activate)
