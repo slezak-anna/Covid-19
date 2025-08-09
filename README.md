@@ -1,7 +1,7 @@
 # COVID-19 Risk Prediction Pipeline
 
 This project is a refactored and modularized machine learning pipeline for predicting COVID-19 confirmed cases and fatalities.  
-It uses **CatBoost**, **XGBoost**, and other ML libraries, with a FastAPI interface for serving predictions and MLflow for experiment tracking.
+It uses **CatBoost** and other ML libraries, with a FastAPI interface for serving predictions and MLflow for experiment tracking.
 
 ---
 
@@ -31,7 +31,7 @@ cd Covid-19
 ```
 ### 2. Create a virtual environment
 ```bash
-conda create -n covid-19-env python=3.9 -y
+conda create -n covid-19-env python=3.10 -y
 conda activate covid-19-env
 (or use python -m venv covid-19-env && source covid-19-env/bin/activate)
 ```
@@ -96,7 +96,7 @@ mlflow ui --port 5000
 In src/train.py, set tracking URI:
 ```bash
 mlflow.set_tracking_uri("http://localhost:5000")
-mlflow.set_experiment("covid19-risk")
+mlflow.set_experiment("covid19-catboost")
 ```
 Open MLflow UI in browser:
 ```bash
