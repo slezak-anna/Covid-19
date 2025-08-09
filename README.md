@@ -18,20 +18,20 @@ Assignment/
 ├── params.yaml # Configuration parameters
 ├── requirements.txt # Python dependencies
 ├── README.md # Documentation
-└── .gitignore``` </pre>
+└── .gitignore </pre>
 
 ## Installation
 
 ### 1. Clone the repository
 ```bash
-git clone https://github.com/<your-username>/Covid-19.git
+git clone https://github.com/slezak-anna/Covid-19.git
 cd Covid-19
 ```
 ### 2. Create a virtual environment
 ```bash
-conda create -n covid-19 python=3.9 -y
-conda activate covid-19
-(or use python -m venv venv && source venv/bin/activate)
+conda create -n covid-19-env python=3.9 -y
+conda activate covid-19-env
+(or use python -m venv covid-19-env && source covid-19-env/bin/activate)
 ```
 ### 3. Install dependencies
 ```bash
@@ -118,10 +118,25 @@ data:
   end_date: "2020-06-01"
   dataset_path: "datasets/"
 
+## Future Improvements
 
-## Notes
-- The dataset is not included in this repository. Place it in datasets/ before training.
-
-- For reproducibility, consider using conda env export > environment.yml after setting up the environment.
-
-- Use .gitignore to avoid committing large model files and raw datasets.
+This project can be further enhanced with the following features:
+1. **Docker Containerization**
+   - Create a `Dockerfile` to package the model, API, and dependencies into a single container.
+   - Enables easy deployment to any environment without manual setup.
+   - Example:
+     ```bash
+     docker build -t covid19-predictor .
+     docker run -p 8000:8000 covid19-predictor
+     ```
+2. **Continuous Integration & Deployment (CI/CD)**
+   - Add GitHub Actions to automatically:
+     - Run tests on every commit
+     - Build Docker images
+     - Deploy to cloud environments (AWS, GCP, Azure, Heroku)
+      
+3. **Model Monitoring**
+   - Integrate tools like `Prometheus + Grafana` for:
+     - Request tracking
+     - Latency monitoring
+     - Accuracy drift detection
