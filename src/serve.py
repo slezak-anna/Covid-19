@@ -1,85 +1,112 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import Optional
-import joblib, numpy as np, pandas as pd, catboost as cb
-from .config import load_config
-from .data import build_main_df, preprocess_df
-from fastapi.responses import HTMLResponse, JSONResponse
+import pandas as pd
+import catboost as cb
+import joblib
+from datetime import datetime
 
-app = FastAPI(title="COVID-19 Sequential Forecast API", version="0.1.0")
-_cfg = load_config()
-_bundle = None
-_main_df = None
+from .config import paths, last_train_date, last_eval_date
+from .data import build_datasets
+from .predict import predict_for_dataset  # reuse the same function to keep behavior identical
+
+app = FastAPI(title="COVID19 CatBoost API")
+
+# Load model bundle
+bundle = joblib.load(paths["model_bundle"])
+catboost_models = bundle["catboost_models"]
+cat_features = bundle["cat_features"]
+feature_columns = bundle["feature_columns"]
+location_columns = bundle["location_columns"]
+
+# Build data and precompute predictions for eval + test window (same logic as src.predict)
+_d = build_datasets()
+
+# 1) Eval predictions
+_prev_day_eval = _d["train_df"].loc[_d["train_df"]["Date"] == last_train_date]
+_first_eval_date = last_train_date + pd.Timedelta(days=1)
+
+_eval_df = _d["eval_df"].copy()
+_eval_features_df = _d["eval_features_df"].copy()
+
+predict_for_dataset(
+    _eval_df, _eval_features_df, _prev_day_eval,
+    _first_eval_date, last_eval_date, update_features_data=False,
+    catboost_models=catboost_models, cat_features=cat_features, location_columns=location_columns
+)
+
+# 2) Test predictions (cascade from eval)
+_prev_day_test = _eval_df.loc[_eval_df["Date"] == last_eval_date]
+_first_test_date = last_eval_date + pd.Timedelta(days=1)
+
+_test_df = _d["test_df"].copy()
+_test_features_df = _d["test_features_df"].copy()
+
+predict_for_dataset(
+    _test_df, _test_features_df, _prev_day_test,
+    _first_test_date, _d["test_df"]["Date"].max(), update_features_data=True,
+    catboost_models=catboost_models, cat_features=cat_features, location_columns=location_columns
+)
+
+# Concatenate eval + test with predictions
+PRED_DF = pd.concat([_eval_df, _test_df], ignore_index=True)
+
+class PredictRequest(BaseModel):
+    rows: list[dict]  # same as before
 
 class PredictRangeRequest(BaseModel):
     country: str
-    province: Optional[str] = ""
-    start_date: str
-    end_date: str
-
-def _ensure_loaded():
-    global _bundle, _main_df
-    if _bundle is None:
-        _bundle = joblib.load(_cfg.paths['model_bundle'])
-    if _main_df is None:
-        _main_df = build_main_df()
-
-def _predict_range(df: pd.DataFrame, feats: pd.DataFrame, start, end, cat_features):
-    models = _bundle['models']
-    df['PredictedLogNewConfirmedCases'] = np.nan
-    df['PredictedLogNewFatalities'] = np.nan
-    df['PredictedConfirmedCases'] = np.nan
-    df['PredictedFatalities'] = np.nan
-
-    for day in pd.date_range(start, end):
-        day_mask = df['Date'] == day
-        pool = cb.Pool(feats.loc[day_mask], cat_features=cat_features)
-        for t in ['LogNewConfirmedCases','LogNewFatalities']:
-            df.loc[day_mask, 'Predicted'+t] = np.maximum(models[t].predict(pool), 0.0)
-
-        prev_day = day - pd.Timedelta(days=1)
-        prev_mask = df['Date'] == prev_day
-        prev_cc = df.loc[prev_mask,'PredictedConfirmedCases'] if prev_mask.any() else pd.Series([], dtype=float)
-        prev_f  = df.loc[prev_mask,'PredictedFatalities'] if prev_mask.any() else pd.Series([], dtype=float)
-        prev_cc = prev_cc.reindex(index=df.loc[day_mask].index).fillna(0.0).values
-        prev_f  = prev_f.reindex(index=df.loc[day_mask].index).fillna(0.0).values
-        df.loc[day_mask,'PredictedConfirmedCases'] = prev_cc + np.rint(np.expm1(df.loc[day_mask,'PredictedLogNewConfirmedCases']))
-        df.loc[day_mask,'PredictedFatalities']     = prev_f  + np.rint(np.expm1(df.loc[day_mask,'PredictedLogNewFatalities']))
-
-        # roll lags
-        next_day = day + pd.Timedelta(days=1)
-        next_mask = df['Date'] == next_day
-        if next_mask.any():
-            nf = feats.loc[next_mask].copy()
-            for field in ['ConfirmedCases','Fatalities']:
-                for k in range(30,1,-1):
-                    to, fr = f'LogNew{field}_prev_day_{k}', f'LogNew{field}_prev_day_{k-1}'
-                    if to in nf and fr in nf: nf[to] = nf[fr]
-            nf['LogNewConfirmedCases_prev_day_1'] = df.loc[day_mask,'PredictedLogNewConfirmedCases'].values
-            nf['LogNewFatalities_prev_day_1']     = df.loc[day_mask,'PredictedLogNewFatalities'].values
-            feats.loc[next_mask] = nf
-    return df
-
-@app.get("/", response_class=HTMLResponse)
-def root():
-    return "<h3>COVID-19 Sequential Forecast API</h3><p>Użyj <a href='/docs'>/docs</a> lub POST /predict-range.</p>"
+    province: str | None = ""  # empty string means country aggregate
+    start_date: str  # ISO, e.g. "2020-03-25"
+    end_date: str    # ISO, e.g. "2020-04-23"
 
 @app.get("/health")
 def health():
-    return JSONResponse({"status": "ok"})
+    return {"status": "ok"}
 
+@app.post("/predict")
+def predict(req: PredictRequest):
+    X = pd.DataFrame(req.rows)
+    X = X.reindex(columns=feature_columns)
+    pool = cb.Pool(X, cat_features=cat_features)
+    out = {}
+    for prediction_name, model in catboost_models.items():
+        preds = model.predict(pool)
+        out[prediction_name] = preds.tolist()
+    return out
 
 @app.post("/predict-range")
 def predict_range(req: PredictRangeRequest):
-    _ensure_loaded()
-    start = pd.to_datetime(req.start_date); end = pd.to_datetime(req.end_date)
-    sub = _main_df[
-        (_main_df['Country/Region'] == req.country) &
-        (_main_df['Province/State'] == (req.province or "")) &
-        (_main_df['Date'] >= start) & (_main_df['Date'] <= end)
-    ].copy()
-    if sub.empty:
-        return {"error":"No rows for given location/dates."}
-    feats, _ = preprocess_df(sub.copy())
-    out = _predict_range(sub, feats, start, end, _cfg.features['cat_features'])
-    return out[['Date','Province/State','Country/Region','PredictedConfirmedCases','PredictedFatalities']].to_dict(orient='records')
+    # Parse dates
+    try:
+        start_dt = datetime.fromisoformat(req.start_date)
+        end_dt = datetime.fromisoformat(req.end_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+
+    if end_dt < start_dt:
+        raise HTTPException(status_code=400, detail="end_date must be >= start_date.")
+
+    # Filter location (province can be empty string)
+    prov = (req.province or "")
+    mask_loc = (PRED_DF["Country/Region"] == req.country) & (PRED_DF["Province/State"] == prov)
+
+    # Filter date range
+    mask_date = (PRED_DF["Date"] >= pd.Timestamp(start_dt)) & (PRED_DF["Date"] <= pd.Timestamp(end_dt))
+
+    out_df = PRED_DF.loc[mask_loc & mask_date, [
+        "Date",
+        "Country/Region",
+        "Province/State",
+        "PredictedLogNewConfirmedCases",
+        "PredictedLogNewFatalities",
+        "PredictedConfirmedCases",
+        "PredictedFatalities"
+    ]].sort_values("Date")
+
+    if out_df.empty:
+        raise HTTPException(status_code=404, detail="No data for given filters (country/province/date range).")
+
+    # JSON-friendly
+    out_df = out_df.copy()
+    out_df["Date"] = out_df["Date"].dt.strftime("%Y-%m-%d")
+    return {"results": out_df.to_dict(orient="records")}

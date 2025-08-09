@@ -7,7 +7,6 @@ xgboost
 tensorflow
 matplotlib
 seaborn
-warnings
 pydantic
 fastapi
 uvicorn[standard]

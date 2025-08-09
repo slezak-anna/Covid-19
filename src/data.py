@@ -1,13 +1,52 @@
+import os
+import re
+import warnings
 import numpy as np
 import pandas as pd
-from typing import Dict, Tuple
-from geopy.distance import distance as geodistance
-from .config import load_config
-import re
+import geopy.distance
 
+# Keep original imports to minimize diffs (even if unused)
+import sklearn.preprocessing  # noqa: F401
+import catboost as cb         # noqa: F401
+import xgboost as xgb         # noqa: F401
+import tensorflow as tf       # noqa: F401
+import matplotlib.pyplot as plt  # noqa: F401
+import seaborn as sns            # noqa: F401
 
-# country name remaps
-def remap_country_name_from_world_bank_to_main_df_name(country: str) -> str:
+from .config import (
+    paths, last_train_date, last_eval_date, last_test_date,
+    cat_features, drop_columns, days_history_size, thresholds
+)
+
+warnings.filterwarnings("ignore")
+
+location_columns = ['Country/Region','Province/State']
+
+# ---- Helpers (names preserved) ----
+def is_cumulative(increment_series):
+    for v in increment_series:
+        if (not np.isnan(v)) and (v < 0):
+            return False
+    return True
+
+def get_hubei_coords(df):
+    for _, row in df.iterrows():
+        if row['Province/State'] == 'Hubei':
+            return (row['Lat'], row['Long'])
+    raise Exception('Hubei not found in data')
+
+def merge_with_column_drop(left_df, right_df, right_df_column='Country'):
+    df = pd.merge(
+        left=left_df,
+        right=right_df,
+        how='left',
+        left_on='Country/Region',
+        right_on=right_df_column
+    )
+    df.drop(columns=right_df_column, inplace=True)
+    return df
+
+def remap_country_name_from_world_bank_to_main_df_name(country):
     return {
         'Bahamas, The': 'The Bahamas',
         'Brunei Darussalam': 'Brunei',
@@ -26,14 +65,14 @@ def remap_country_name_from_world_bank_to_main_df_name(country: str) -> str:
         'Venezuela, RB': 'Venezuela',
     }.get(country, country)
 
-def remap_country_name_from_un_wpp_to_main_df_name(country: str) -> str:
+def remap_country_name_from_un_wpp_to_main_df_name(country):
     return {
         'Bahamas': 'The Bahamas',
         'Bolivia (Plurinational State of)': 'Bolivia',
         'Brunei Darussalam': 'Brunei',
         'China, Taiwan Province of China': 'Taiwan*',
-        'Congo': 'Congo (Brazzaville)',
-        "Côte d'Ivoire": "Cote d'Ivoire",
+        'Congo' : 'Congo (Brazzaville)',
+        'Côte d\'Ivoire': 'Cote d\'Ivoire',
         'Democratic Republic of the Congo': 'Congo (Kinshasa)',
         'Gambia': 'The Gambia',
         'Iran (Islamic Republic of)': 'Iran',
@@ -47,190 +86,179 @@ def remap_country_name_from_un_wpp_to_main_df_name(country: str) -> str:
         'Viet Nam': 'Vietnam'
     }.get(country, country)
 
-WB_CONV = {'Country Name': remap_country_name_from_world_bank_to_main_df_name}
-UN_CONV = {'Location': remap_country_name_from_un_wpp_to_main_df_name}
+world_bank_converters={'Country Name': remap_country_name_from_world_bank_to_main_df_name}
+un_wpp_converters={'Location': remap_country_name_from_un_wpp_to_main_df_name}
 
-# loaders
-def load_raw() -> Tuple[pd.DataFrame, pd.DataFrame]:
-    cfg = load_config()
-    train = pd.read_csv(cfg.paths['kaggle_train'], parse_dates=['Date'])
-    test  = pd.read_csv(cfg.paths['kaggle_test'],  parse_dates=['Date'])
-    return train, test
+def preprocess_df(df):
+    labels = df[['LogNewConfirmedCases', 'LogNewFatalities']].copy()
+    features_df = df.drop(columns=drop_columns).copy()
+    return features_df, labels
 
-def _latest_value_by_year_cols(df: pd.DataFrame, value_name: str) -> pd.DataFrame:
-    year_cols = [c for c in df.columns if c.isdigit()]
-    df[value_name] = df[year_cols].apply(
-        lambda row: row[row.last_valid_index()] if row.last_valid_index() else np.nan, axis=1
+# ---- Main data pipeline (names preserved) ----
+def build_datasets():
+    # Load
+    original_train_df = pd.read_csv(paths["kaggle_train"], parse_dates=['Date'])
+    original_test_df  = pd.read_csv(paths["kaggle_test"],  parse_dates=['Date'])
+
+    last_original_train_date = original_train_df['Date'].max()
+    original_test_wo_train_df = original_test_df.drop(
+        index=original_test_df[original_test_df['Date'] <= last_original_train_date].index
     )
-    return df
+    main_df = pd.concat([original_train_df, original_test_wo_train_df], ignore_index=True)
 
-def load_world_bank() -> Dict[str, pd.DataFrame]:
-    cfg = load_config()
-    area = pd.read_csv(cfg.paths['world_bank']['area'],    skiprows=4, converters=WB_CONV)
-    smoking = pd.read_csv(cfg.paths['world_bank']['smoking'], skiprows=4, converters=WB_CONV)
-    beds = pd.read_csv(cfg.paths['world_bank']['beds'],    skiprows=4, converters=WB_CONV)
-    health = pd.read_csv(cfg.paths['world_bank']['health'],  skiprows=4, converters=WB_CONV)
+    # Cruise ships swap
+    from_cruise_ships = main_df['Province/State'].isin(['From Diamond Princess', 'Grand Princess'])
+    main_df.loc[from_cruise_ships, ['Province/State','Country/Region']] = \
+        main_df.loc[from_cruise_ships, ['Country/Region','Province/State']].values
 
-    area   = _latest_value_by_year_cols(area,   'CountryArea')[['Country Name','CountryArea']]
-    smoking= _latest_value_by_year_cols(smoking,'CountrySmokingRate')[['Country Name','CountrySmokingRate']]
-    beds   = _latest_value_by_year_cols(beds,   'CountryHospitalBedsRate')[['Country Name','CountryHospitalBedsRate']]
-    health = _latest_value_by_year_cols(health, 'CountryHealthExpenditurePerCapitaPPP')[['Country Name','CountryHealthExpenditurePerCapitaPPP']]
-    return {'area': area, 'smoking': smoking, 'beds': beds, 'health': health}
-
-def load_un_wpp_population() -> pd.DataFrame:
-    cfg = load_config()
-    df = pd.read_csv(
-        cfg.paths['un_wpp_population'],
-        usecols=['Location','Time','AgeGrp','PopMale','PopFemale','PopTotal'],
-        parse_dates=['Time'],
-        converters=UN_CONV
-    )
-    df = df[(df['Time'] >= pd.Timestamp(2014,1,1)) & (df['Time'] <= pd.Timestamp(2019,1,1))]
-
-    agg_rows = []
-    for (location, time), g in df.groupby(["Location","Time"]):
-        buckets = [0]*5
-        male = female = 0
-        for _, r in g.iterrows():
-            start = int(re.split(r"[\-\+]", r["AgeGrp"])[0])
-            buckets[min(start // 20, 4)] += (r["PopMale"] + r["PopFemale"])
-            male   += r["PopMale"]; female += r["PopFemale"]
-        agg_rows.append({
-            "Location": location, "Time": time,
-            "CountryPop_0-20": buckets[0], "CountryPop_20-40": buckets[1],
-            "CountryPop_40-60": buckets[2], "CountryPop_60-80": buckets[3],
-            "CountryPop_80+": buckets[4],
-            "CountryPopMale": male, "CountryPopFemale": female,
-            "CountryPopTotal": male + female,
-        })
-    agg = pd.DataFrame(agg_rows).sort_values('Time').drop_duplicates(['Location'], keep='last')
-    return agg.drop(columns='Time')
-
-# feature engineering 
-def _get_hubei_coords(df: pd.DataFrame) -> Tuple[float, float]:
-    h = df[df['Province/State'] == 'Hubei']
-    if h.empty:
-        raise RuntimeError('Hubei not found in data')
-    r = h.iloc[0]
-    return float(r['Lat']), float(r['Long'])
-
-def _is_cumulative(incr: np.ndarray) -> bool:
-    # cumulated series must not have negative daily increments
-    return np.all(np.isnan(incr) | (incr >= 0))
-
-def build_main_df() -> pd.DataFrame:
-    cfg = load_config()
-    train, test = load_raw()
-
-    last_train_date = train['Date'].max()
-    test_wo_train = test.drop(index=test[test['Date'] <= last_train_date].index)
-
-    main_df = pd.concat([train, test_wo_train], ignore_index=True)
-    from_ships = main_df['Province/State'].isin(['From Diamond Princess','Grand Princess'])
-    main_df.loc[from_ships, ['Province/State','Country/Region']] = (
-        main_df.loc[from_ships, ['Country/Region','Province/State']].values
-    )
-
-    # sort & fill
+    # Feature engineering
     main_df.sort_values(by='Date', inplace=True)
-    for c in ['Country/Region','Province/State']:
-        main_df[c] = main_df[c].fillna('')
 
-    # time-delay embedding
-    days_history = int(cfg.modelling['days_history_size'])
+    for column in location_columns:
+        main_df[column].fillna('', inplace=True)
 
-    # init kolumn
-    for fld in ['LogNewConfirmedCases', 'LogNewFatalities']:
-        main_df[fld] = np.nan
-        for k in range(1, days_history + 1):
-            main_df[f"{fld}_prev_day_{k}"] = np.nan
+    print('data size before removing bad data = ', len(main_df))
+    for field in ['LogNewConfirmedCases', 'LogNewFatalities']:
+        main_df[field] = np.nan
+        for prev_day in range(1, days_history_size + 1):
+            main_df[field + '_prev_day_%s' % prev_day] = np.nan
 
-    bad_idx = []  # zbierz indeksy do usunięcia po pętli
-
-    for keys, loc_df in main_df.groupby(['Country/Region', 'Province/State'], sort=False):
-        idx = loc_df.index
-
-        # sprawdź kumulatywność dla obu serii naraz
-        is_ok = True
+    for location_name, location_df in main_df.groupby(location_columns):
         for field in ['ConfirmedCases', 'Fatalities']:
-            vals = loc_df[field].astype(float).to_numpy()
-            incr = np.diff(np.r_[0.0, vals])  # dzienne przyrosty
-            if np.any(incr[~np.isnan(incr)] < 0):
-                is_ok = False
+            new_values = location_df[field].values.copy()
+            new_values[1:] -= new_values[:-1]
+            if not is_cumulative(new_values):
+                print('%s for %s, %s is not valid cumulative series, drop it' % ((field,) + location_name))
+                main_df.drop(index=location_df.index, inplace=True)
                 break
+            log_new_values = np.log1p(new_values)
+            main_df.loc[location_df.index, 'LogNew' + field] = log_new_values
+            for prev_day in range(1, days_history_size + 1):
+                main_df.loc[location_df.index[prev_day:], 'LogNew%s_prev_day_%s' % (field, prev_day)] = (
+                    log_new_values[:-prev_day]
+                )
+    print('data size after removing bad data = ', len(main_df))
 
-        if not is_ok:
-            bad_idx.append(idx)
-            continue  # nie licz cech dla wadliwych grup
-
-        # oblicz cechy dla obu targetów
-        for field in ['ConfirmedCases', 'Fatalities']:
-            vals = loc_df[field].astype(float).to_numpy()
-            incr = np.diff(np.r_[0.0, vals])
-            log_new = np.log1p(np.maximum(incr, 0.0))
-            main_df.loc[idx, 'LogNew' + field] = log_new
-            for k in range(1, days_history + 1):
-                main_df.loc[idx[k:], f'LogNew{field}_prev_day_{k}'] = log_new[:-k]
-
-    # dopiero teraz usuń złe lokalizacje
-    if bad_idx:
-        bad_idx = np.concatenate([i.values if hasattr(i, "values") else np.array(i) for i in bad_idx])
-        main_df = main_df.drop(index=bad_idx).copy()
-
-    # Day / WeekDay
-    first_date = main_df['Date'].min()
+    # Day and WeekDay
+    first_date = min(main_df['Date'])
     main_df['Day'] = (main_df['Date'] - first_date).dt.days.astype('int32')
-    main_df['WeekDay'] = main_df['Date'].dt.weekday
+    main_df['WeekDay'] = main_df['Date'].transform(lambda d: d.weekday())
 
-    # Days-since thresholds
-    for th in cfg.modelling['thresholds_since']:
-        main_df[f'Days_since_ConfirmedCases={th}'] = np.nan
-        main_df[f'Days_since_Fatalities={th}']      = np.nan
-    for (_, _), loc_df in main_df.groupby(['Country/Region','Province/State']):
-        g = loc_df.sort_values('Date')
-        for field in ['ConfirmedCases','Fatalities']:
-            for th in cfg.modelling['thresholds_since']:
-                first_day = g['Day'].loc[g[field] >= th].min()
-                if pd.notna(first_day):
-                    main_df.loc[g.index, f'Days_since_{field}={th}'] = g['Day'].apply(
-                        lambda d: -1 if d < first_day else d - first_day
-                    ).values
+    # Days since Xth
+    for threshold in thresholds:
+        main_df['Days_since_ConfirmedCases=%s' % threshold] = np.nan
+        main_df['Days_since_Fatalities=%s' % threshold] = np.nan
+
+    for location_name, location_df in main_df.groupby(location_columns):
+        for field in ['ConfirmedCases', 'Fatalities']:
+            for threshold in thresholds:
+                first_day = location_df['Day'].loc[location_df[field] >= threshold].min()
+                if not np.isnan(first_day):
+                    main_df.loc[location_df.index, 'Days_since_%s=%s' % (field, threshold)] = \
+                        location_df['Day'].transform(lambda day: -1 if (day < first_day) else (day - first_day))
 
     # Distance to origin (Hubei)
-    origin = _get_hubei_coords(main_df)
+    origin_coords = get_hubei_coords(main_df)
     main_df['Distance_to_origin'] = main_df.apply(
-        lambda r: geodistance((r['Lat'], r['Long']), origin).km, axis=1
+        lambda row: geopy.distance.distance((row['Lat'], row['Long']), origin_coords).km,
+        axis='columns'
     )
 
-    # external features: World Bank + UN WPP
-    wb = load_world_bank()
-    def _merge_drop(left: pd.DataFrame, right: pd.DataFrame, right_col='Country Name'):
-        df = left.merge(right, how='left', left_on='Country/Region', right_on=right_col)
-        if right_col in df.columns: df.drop(columns=[right_col], inplace=True)
-        return df
-    for key in ['area','smoking','beds','health']:
-        main_df = _merge_drop(main_df, wb[key], right_col='Country Name')
+    # External merges
+    area_df = pd.read_csv(paths["world_bank"]["area"], skiprows=4, converters=world_bank_converters)
+    year_columns = [str(year) for year in range(1960, 2020)]
+    area_df['CountryArea'] = area_df[year_columns].apply(
+        lambda row: row[row.last_valid_index()] if row.last_valid_index() else np.nan,
+        axis='columns'
+    )
+    area_df = area_df[['Country Name', 'CountryArea']]
+    main_df = merge_with_column_drop(main_df, area_df, right_df_column='Country Name')
 
-    pop = load_un_wpp_population()
-    main_df = _merge_drop(main_df, pop, right_col='Location')
+    population_df = pd.read_csv(
+        paths["un_wpp_population"],
+        usecols=['Location', 'Time', 'AgeGrp', 'PopMale', 'PopFemale', 'PopTotal'],
+        parse_dates=['Time'],
+        converters= {'Location': remap_country_name_from_un_wpp_to_main_df_name}
+    )
+    population_df = population_df.loc[
+        (population_df['Time'] >= pd.Timestamp(2014,1,1))
+        & (population_df['Time'] <= pd.Timestamp(2019,1,1))
+    ]
 
-    # density
-    if 'CountryPopTotal' in main_df and 'CountryArea' in main_df:
-        main_df['CountryPopDensity'] = main_df['CountryPopTotal'] / main_df['CountryArea']
+    aggregated_population_df = pd.DataFrame()
+    for (location, time), group_df in population_df.groupby(["Location", "Time"]):
+        pop_by_age_groups = [0]*5
+        pop_male = 0
+        pop_female = 0
+        for _, row in group_df.iterrows():
+            age_grp_start = int(re.split(r"[\-\+]", row["AgeGrp"])[0])
+            pop_by_age_groups[min(age_grp_start // 20, 4)] += (row["PopMale"] + row["PopFemale"])
+            pop_male += row["PopMale"]
+            pop_female += row["PopFemale"]
+        new_row = pd.DataFrame([{
+            "Location": location,
+            "Time": time,
+            "CountryPop_0-20": pop_by_age_groups[0],
+            "CountryPop_20-40": pop_by_age_groups[1],
+            "CountryPop_40-60": pop_by_age_groups[2],
+            "CountryPop_60-80": pop_by_age_groups[3],
+            "CountryPop_80+":   pop_by_age_groups[4],
+            "CountryPopMale":   pop_male,
+            "CountryPopFemale": pop_female,
+            "CountryPopTotal":  pop_male + pop_female,
+        }])
+        aggregated_population_df = pd.concat([aggregated_population_df, new_row], ignore_index=True)
 
-    return main_df
+    aggregated_population_df = aggregated_population_df.sort_values('Time').drop_duplicates(['Location'], keep='last')
+    aggregated_population_df.drop(columns='Time', inplace=True)
+    main_df = merge_with_column_drop(main_df, aggregated_population_df, right_df_column='Location')
 
-def make_splits(df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
-    cfg = load_config()
-    d_train = pd.Timestamp(cfg.dates['last_train_date'])
-    d_eval  = pd.Timestamp(cfg.dates['last_eval_date'])
-    train = df[df['Date'] <= d_train].copy()
-    eval_ = df[(df['Date'] > d_train) & (df['Date'] <= d_eval)].copy()
-    test  = df[df['Date'] > d_eval].copy()
-    return {'train': train, 'eval': eval_, 'test': test}
+    main_df['CountryPopDensity'] = main_df['CountryPopTotal'] / main_df['CountryArea']
 
-def preprocess_df(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    cfg = load_config()
-    labels = df[['LogNewConfirmedCases','LogNewFatalities']].copy()
-    features_df = df.drop(columns=[c for c in cfg.features['drop_columns'] if c in df.columns]).copy()
-    return features_df, labels
+    recent_year_columns = [str(year) for year in range(2010, 2020)]
+
+    smoking_df = pd.read_csv(paths["world_bank"]["smoking"], skiprows=4, converters=world_bank_converters)
+    smoking_df['CountrySmokingRate'] = smoking_df[recent_year_columns].apply(
+        lambda row: row[row.last_valid_index()] if row.last_valid_index() else np.nan,
+        axis='columns'
+    )
+    smoking_df = smoking_df[['Country Name', 'CountrySmokingRate']]
+    main_df = merge_with_column_drop(main_df, smoking_df, right_df_column='Country Name')
+
+    hospital_beds_df = pd.read_csv(paths["world_bank"]["beds"], skiprows=4, converters=world_bank_converters)
+    hospital_beds_df['CountryHospitalBedsRate'] = hospital_beds_df[recent_year_columns].apply(
+        lambda row: row[row.last_valid_index()] if row.last_valid_index() else np.nan,
+        axis='columns'
+    )
+    hospital_beds_df = hospital_beds_df[['Country Name', 'CountryHospitalBedsRate']]
+    main_df = merge_with_column_drop(main_df, hospital_beds_df, right_df_column='Country Name')
+
+    health_expenditure_df = pd.read_csv(paths["world_bank"]["health"], skiprows=4, converters=world_bank_converters)
+    health_expenditure_df['CountryHealthExpenditurePerCapitaPPP'] = health_expenditure_df[recent_year_columns].apply(
+        lambda row: row[row.last_valid_index()] if row.last_valid_index() else np.nan,
+        axis='columns'
+    )
+    health_expenditure_df = health_expenditure_df[['Country Name', 'CountryHealthExpenditurePerCapitaPPP']]
+    main_df = merge_with_column_drop(main_df, health_expenditure_df, right_df_column='Country Name')
+
+    # Splits (dates from YAML)
+    train_df = main_df[main_df['Date'] <= last_train_date].copy()
+    eval_df  = main_df[(main_df['Date'] > last_train_date) & (main_df['Date'] <= last_eval_date)].copy()
+    test_df  = main_df[main_df['Date'] > last_eval_date].copy()
+
+    train_features_df, train_labels = preprocess_df(train_df)
+    eval_features_df,  eval_labels  = preprocess_df(eval_df)
+    test_features_df,  _            = preprocess_df(test_df)
+
+    return {
+        "main_df": main_df,
+        "train_df": train_df,
+        "eval_df": eval_df,
+        "test_df": test_df,
+        "train_features_df": train_features_df,
+        "train_labels": train_labels,
+        "eval_features_df": eval_features_df,
+        "eval_labels": eval_labels,
+        "test_features_df": test_features_df,
+        "location_columns": location_columns
+    }
