@@ -103,7 +103,7 @@ Open MLflow UI in browser:
 http://localhost:5000
 ```
 
-## All parameters (model hyperparameters, file paths, dates) are stored in:
+#### All parameters (model hyperparameters, file paths, dates) are stored in:
 ```bash
 params.yaml
 ```
