@@ -56,7 +56,7 @@ This will load the saved model and generate predictions based on the input data.
 ## Serving the Model via API
 Start FastAPI server:
 ```bash
-uvicorn src.serve:app --reload
+uvicorn src.serve:app --port 8000
 ```
 By default, the API runs at: "http://localhost:8000"
 
