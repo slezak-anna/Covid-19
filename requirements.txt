@@ -1,0 +1,16 @@
+numpy
+pandas
+scikit-learn
+geopy
+catboost
+xgboost
+tensorflow
+matplotlib
+seaborn
+warnings
+pydantic
+fastapi
+uvicorn[standard]
+joblib
+pyyaml
+mlflow

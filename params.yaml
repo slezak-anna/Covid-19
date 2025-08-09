@@ -1,0 +1,35 @@
+random_state: 42
+
+dates:
+  last_train_date: "2020-03-11"
+  last_eval_date: "2020-03-24"
+  last_test_date: "2020-04-23"
+
+paths:
+  kaggle_train: "datasets/covid19-global-forecasting-week-1/train.csv"
+  kaggle_test:  "datasets/covid19-global-forecasting-week-1/test.csv"
+  world_bank:
+    area:   "area/API_AG.LND.TOTL.K2_DS2_en_csv_v2_21556.csv"
+    smoking: "smoking/API_SH.PRV.SMOK_DS2_en_csv_v2_31160.csv"
+    beds:   "hospital_beds/API_SH.MED.BEDS.ZS_DS2_en_csv_v2_23583.csv"
+    health: "health_expenditure/API_SH.XPD.CHEX.PP.CD_DS2_en_csv_v2_34418.csv"
+  un_wpp_population: "datasets/WPP2019_PopulationByAgeSex_Medium.csv"
+  model_dir: "models"
+  model_bundle: "models/covid19_catboost_bundle.joblib"
+  metrics_file: "models/metrics.json"
+
+features:
+  cat_features: ["Province/State", "Country/Region"]
+  drop_columns:
+    - "Id"
+    - "ForecastId"
+    - "ConfirmedCases"
+    - "LogNewConfirmedCases"
+    - "Fatalities"
+    - "LogNewFatalities"
+    - "Date"
+
+modelling:
+  iterations: 1000
+  days_history_size: 30
+  thresholds_since: [1, 10, 100]
