@@ -7,7 +7,7 @@ from datetime import datetime
 
 from .config import paths, last_train_date, last_eval_date
 from .data import build_datasets
-from .predict import predict_for_dataset  # reuse the same function to keep behavior identical
+from .predict import predict_for_dataset  
 
 app = FastAPI(title="COVID19 CatBoost API")
 
@@ -18,7 +18,6 @@ cat_features = bundle["cat_features"]
 feature_columns = bundle["feature_columns"]
 location_columns = bundle["location_columns"]
 
-# Build data and precompute predictions for eval + test window (same logic as src.predict)
 _d = build_datasets()
 
 # 1) Eval predictions
@@ -55,9 +54,9 @@ class PredictRequest(BaseModel):
 
 class PredictRangeRequest(BaseModel):
     country: str
-    province: str | None = ""  # empty string means country aggregate
-    start_date: str  # ISO, e.g. "2020-03-25"
-    end_date: str    # ISO, e.g. "2020-04-23"
+    province: str | None = ""  
+    start_date: str  
+    end_date: str    
 
 @app.get("/health")
 def health():

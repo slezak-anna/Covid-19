@@ -1,7 +1,3 @@
-"""
-Training entrypoint. Keeps original variable/function names and adds light MLflow logging.
-Run with: python -m src.train
-"""
 from .data import build_datasets
 from .model import train_catboost_models, save_model_bundle, save_metrics
 from .config import iterations, days_history_size, thresholds, cat_features, paths

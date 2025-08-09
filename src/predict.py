@@ -6,7 +6,6 @@ import joblib
 from .config import last_train_date, last_eval_date, last_test_date
 from .data import build_datasets
 
-# Keep original function name/signature
 def predict_for_dataset(df, features_df, prev_day_df, first_date, last_date, update_features_data,
                         catboost_models, cat_features, location_columns):
     df['PredictedLogNewConfirmedCases'] = np.nan
