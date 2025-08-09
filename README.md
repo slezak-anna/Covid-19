@@ -1,7 +1,7 @@
 # COVID-19 Risk Prediction Pipeline
 
 This project is a refactored and modularized machine learning pipeline for predicting COVID-19 confirmed cases and fatalities.  
-It uses **CatBoost**, **XGBoost**, and other ML libraries, with a FastAPI interface for serving predictions and MLflow for experiment tracking.
+It uses **CatBoost** and other ML libraries, with a FastAPI interface for serving predictions and MLflow for experiment tracking.
 
 ---
 
